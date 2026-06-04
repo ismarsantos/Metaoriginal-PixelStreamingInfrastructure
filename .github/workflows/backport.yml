@@ -1,0 +1,43 @@
+name: Backport
+
+on:
+  pull_request_target:
+    types: ["labeled", "closed"]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  backport:
+    name: Backport PR
+    runs-on: ubuntu-latest
+    if: |
+      github.event.pull_request.merged == true
+      && contains(github.event.pull_request.labels.*.name, 'auto-backport')
+      && (
+        (github.event.action == 'labeled' && github.event.label.name == 'auto-backport')
+        || (github.event.action == 'closed')
+      )
+    steps:
+      - name: Backport Action
+        uses: sqren/backport-github-action@v8.9.3
+        with:
+          # Prefer a PAT when configured. PRs opened with the default
+          # GITHUB_TOKEN don't trigger downstream `pull_request` workflows
+          # (anti-recursion limit), which means CI does not run on backport
+          # PRs. Configure a repo or org secret named BACKPORT_PAT
+          # (PAT with `repo` scope) to fix that. Falls back to GITHUB_TOKEN
+          # if the secret is not set, preserving the prior behavior.
+          github_token: ${{ secrets.BACKPORT_PAT || secrets.GITHUB_TOKEN }}
+          auto_backport_label_prefix: auto-backport-to-
+          add_original_reviewers: true
+
+      - name: Info log
+        if: ${{ success() }}
+        run: cat ~/.backport/backport.info.log
+        
+      - name: Debug log
+        if: ${{ failure() }}
+        run: cat ~/.backport/backport.debug.log        
+          
