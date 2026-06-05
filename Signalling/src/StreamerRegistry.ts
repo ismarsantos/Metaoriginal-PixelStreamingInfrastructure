@@ -138,8 +138,24 @@ export class StreamerRegistry extends EventEmitter {
     private onEndpointId(streamer: IStreamer, message: Messages.endpointId): void {
         const oldId = streamer.streamerId;
 
-        // id might conflict or be invalid so here we sanitize it
-        streamer.streamerId = this.sanitizeStreamerId(message.id);
+        // Evict any stale ghost(s) that already hold the requested id. This happens
+        // when a streamer crashes/reconnects before its old WebSocket close fires,
+        // leaving a zombie registration behind. "Last write wins": the freshly
+        // connected streamer claims the id and the dead one is forced off.
+        const ghosts = this.streamers.filter(
+            (existing) => existing !== streamer && existing.streamerId === message.id
+        );
+        for (const ghost of ghosts) {
+            Logger.warn(
+                `StreamerRegistry: Evicting ghost streamer "${message.id}" — duplicate reconnect detected.`
+            );
+            this.remove(ghost);
+            ghost.transport.disconnect();
+        }
+
+        // Sanitize against the remaining ids, excluding this streamer's own slot
+        // so that re-identifying with the same id doesn't bump it to "<id>1".
+        streamer.streamerId = this.sanitizeStreamerId(message.id, streamer);
 
         Logger.debug(`StreamerRegistry: Streamer id change. ${oldId} -> ${streamer.streamerId}`);
         streamer.emit('id_changed', streamer.streamerId);
@@ -150,30 +166,30 @@ export class StreamerRegistry extends EventEmitter {
         );
     }
 
-    private sanitizeStreamerId(id: string): string {
+    private sanitizeStreamerId(id: string, exclude?: IStreamer): string {
         // create a default id if none supplied
         if (!id) {
             id = this.defaultStreamerIdPrefix;
         }
 
-        // search for existing streamerId and optionally append a numeric value
-        let maxPostfix = -1;
-        for (const streamer of this.streamers) {
-            const idMatchRegex = /^(.*?)(\d*)$/;
+        // A candidate id is taken if any OTHER streamer (never the excluded one)
+        // already holds it. Excluding self lets a streamer re-identify with the
+        // same id without being bumped to "<id>1".
+        const taken = (candidate: string): boolean =>
+            this.streamers.some((streamer) => streamer !== exclude && streamer.streamerId === candidate);
 
-            const [, baseId, postfix] = streamer.streamerId.match(idMatchRegex)!;
-            // if the id is numeric then base id will be empty and we need to compare with the postfix
-            if ((baseId !== '' && baseId !== id) || (baseId === '' && postfix !== id)) {
-                continue;
-            }
-            const numPostfix = Number(postfix);
-            if (numPostfix > maxPostfix) {
-                maxPostfix = numPostfix;
-            }
+        // Fast path: the exact id is free.
+        if (!taken(id)) {
+            return id;
         }
-        if (maxPostfix >= 0) {
-            return id + (maxPostfix + 1);
+
+        // Append the lowest free numeric suffix. The previous regex-based approach
+        // (/^(.*?)(\d*)$/) silently failed to deconflict ids that already end in
+        // digits (e.g. "stream03"), allowing two entries with the same id.
+        let counter = 1;
+        while (taken(`${id}${counter}`)) {
+            counter++;
         }
-        return id;
+        return `${id}${counter}`;
     }
 }

@@ -1,8 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 import tseslint from 'typescript-eslint';
 import tsdocPlugin from 'eslint-plugin-tsdoc';
 import baseConfig from '../eslint.config.mjs'
+
+// import.meta.dirname requires Node ≥21.2; use fileURLToPath for compatibility.
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default tseslint.config(
     baseConfig,
@@ -14,7 +19,7 @@ export default tseslint.config(
             parser: tseslint.parser,
             parserOptions: {
                 project: 'tsconfig.cjs.json',
-                tsconfigRootDir: import.meta.dirname,
+                tsconfigRootDir: __dirname,
             },
         },
         files: ["src/**/*.ts"],
