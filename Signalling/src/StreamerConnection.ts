@@ -127,7 +127,24 @@ export class StreamerConnection extends EventEmitter implements IStreamer, LogUt
 
         this.protocol.on(Messages.offer.typeName, this.forwardMessage.bind(this));
         this.protocol.on(Messages.answer.typeName, this.forwardMessage.bind(this));
-        this.protocol.on(Messages.iceCandidate.typeName, this.forwardMessage.bind(this));
+        this.protocol.on(Messages.iceCandidate.typeName, this.onIceCandidate.bind(this));
+    }
+
+    // Tailscale assigns CGNAT addresses in 100.64.0.0/10 (second octet 64-127).
+    // These are not routable from the public internet; forwarding them as ICE
+    // candidates causes the browser to waste time trying unreachable addresses.
+    private static readonly TAILSCALE_CGNAT_RE =
+        /\b100\.(?:6[4-9]|[789]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b/;
+
+    private onIceCandidate(message: Messages.iceCandidate): void {
+        const candidateStr = message.candidate?.candidate ?? '';
+        if (StreamerConnection.TAILSCALE_CGNAT_RE.test(candidateStr)) {
+            Logger.debug(
+                `Filtered Tailscale CGNAT ICE candidate from streamer '${this.streamerId}': ${candidateStr}`
+            );
+            return;
+        }
+        this.forwardMessage(message);
     }
 
     private forwardMessage(message: BaseMessage): void {
